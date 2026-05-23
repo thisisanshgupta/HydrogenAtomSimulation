@@ -1,4 +1,7 @@
-# Hydrogen Wavefunction Visualizer
+# Atom Simulation in C++
+
+![Orbital Gallery](orbital_gallery.png)
+
 This project calculates and visualizes the quantum mechanical wavefunction of a hydrogen atom. It uses a high-performance C++ backend to compute the complex spatial probability densities and a Python script to generate the final plots.
 ## Getting Started
 Follow these steps to compile the backend and generate the visualization.
