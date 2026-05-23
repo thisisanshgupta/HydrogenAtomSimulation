@@ -1,17 +1,3 @@
-"""
-File: hydrogen_plot.py
-Description: Visualization layer for hydrogenic wavefunctions.
-             Reads CSV data produced by the C++ backend (hydrogen_wavefunction.cpp)
-             and renders probability density orbital diagrams + radial distributions.
-
-Usage:
-    1. Compile and run the C++ backend first:
-           g++ -O3 -std=c++17 -o hydrogen_wavefunction hydrogen_wavefunction.cpp -lm
-           ./hydrogen_wavefunction
-    2. Then run this script:
-           python hydrogen_plot.py
-"""
-
 import os
 import glob
 import re
@@ -22,7 +8,6 @@ import matplotlib.gridspec as gridspec
 from matplotlib.colors import PowerNorm
 from matplotlib.ticker import MultipleLocator
 
-# ── Aesthetics ────────────────────────────────────────────────────────────────
 plt.rcParams.update({
     "figure.facecolor":  "#0a0a12",
     "axes.facecolor":    "#0a0a12",
@@ -36,14 +21,13 @@ plt.rcParams.update({
     "mathtext.fontset":  "cm",
 })
 
-CMAP_PSI  = "inferno"          # probability density
-CMAP_RADIAL = "plasma"         # radial distribution colour cycle backup
+CMAP_PSI  = "inferno"
+CMAP_RADIAL = "plasma"
 ORBITAL_COLORS = [
     "#ff6b6b", "#ffa36b", "#ffd56b", "#6bffb8",
     "#6be4ff", "#6b8eff", "#d46bff", "#ff6bd4",
 ]
 
-# Map (n,l,m) → spectroscopic label
 def orbital_label(n, l, m):
     sub = ["s", "p", "d", "f", "g", "h"][l]
     return rf"$|{n}{sub}_{{m={m}}}\rangle$"
@@ -51,10 +35,7 @@ def orbital_label(n, l, m):
 def latex_psi_label(n, l, m):
     return rf"$\psi_{{{n},{l},{m}}}$"
 
-# ── Load all CSV files produced by the C++ backend ───────────────────────────
-
 def discover_orbitals():
-    """Return sorted list of (n,l,m) tuples for which both CSV files exist."""
     pattern = re.compile(r"psi_n(\d+)l(\d+)m(-?\d+)\.csv")
     orbitals = []
     for fn in sorted(glob.glob("psi_n*.csv")):
@@ -80,8 +61,6 @@ def load_radial(n, l, m):
     df = pd.read_csv(fn)
     return df["r_over_a_mu"].values, df["R_nl"].values, df["radial_prob"].values
 
-# ── Plot 1: Orbital probability-density gallery ───────────────────────────────
-
 def plot_orbital_gallery(orbitals, out_file="orbital_gallery.png"):
     ncols = 5
     nrows = int(np.ceil(len(orbitals) / ncols))
@@ -102,7 +81,6 @@ def plot_orbital_gallery(orbitals, out_file="orbital_gallery.png"):
 
         X, Z, P = load_psi_slice(n, l, m)
 
-        # Normalise to [0,1] for colour mapping
         vmax = np.percentile(P, 99.8)
         im = ax.imshow(
             P,
@@ -114,11 +92,9 @@ def plot_orbital_gallery(orbitals, out_file="orbital_gallery.png"):
             interpolation="bilinear",
         )
 
-        # Cross-hair at nucleus
         ax.axhline(0, color="#ffffff18", lw=0.5, ls="--")
         ax.axvline(0, color="#ffffff18", lw=0.5, ls="--")
 
-        # Labels
         sub  = ["s","p","d","f","g","h"][l]
         title = f"$n={n},\\ l={l},\\ m={m}$   {n}{sub}"
         ax.set_title(title, fontsize=9, color="#c8c4b8", pad=3)
@@ -130,8 +106,6 @@ def plot_orbital_gallery(orbitals, out_file="orbital_gallery.png"):
                 facecolor=fig.get_facecolor())
     print(f"  ✓  Saved {out_file}")
     plt.close(fig)
-
-# ── Plot 2: Individual orbital detail (density + radial dist side by side) ────
 
 def plot_orbital_detail(n, l, m, out_file=None):
     if out_file is None:
@@ -149,7 +123,6 @@ def plot_orbital_detail(n, l, m, out_file=None):
     gs = gridspec.GridSpec(1, 3, figure=fig, width_ratios=[1, 0.05, 1.1],
                            wspace=0.12, left=0.06, right=0.97)
 
-    # ── Left: 2-D probability density ────────────────────────────────────────
     ax_orb = fig.add_subplot(gs[0])
     vmax = np.percentile(P, 99.8)
     im   = ax_orb.imshow(
@@ -167,8 +140,7 @@ def plot_orbital_detail(n, l, m, out_file=None):
     ax_orb.set_ylabel(r"$z$ / $a_\mu$", fontsize=11)
     ax_orb.set_title(r"$|\psi_{n,l,m}(x,0,z)|^2$  (y=0 plane)", fontsize=10, color="#a0a0c0")
 
-    # Convert axis ticks to units of a_mu
-    a_mu = 5.29465e-11   # m (reduced-mass for H)
+    a_mu = 5.29465e-11
     def to_au(val_m): return val_m / a_mu
     x_extent_au = [to_au(X.min()), to_au(X.max())]
     z_extent_au = [to_au(Z.min()), to_au(Z.max())]
@@ -180,13 +152,11 @@ def plot_orbital_detail(n, l, m, out_file=None):
     ax_orb.set_yticks(np.linspace(Z.min(), Z.max(), n_ticks))
     ax_orb.set_yticklabels([f"{v:.0f}" for v in zt], fontsize=8)
 
-    # Colourbar
     ax_cb = fig.add_subplot(gs[1])
     cb    = plt.colorbar(im, cax=ax_cb)
     cb.set_label(r"$|\psi|^2$ [a.u.]", fontsize=9, color="#a0a0c0")
     cb.ax.yaxis.set_tick_params(color="#7a7a9a", labelcolor="#7a7a9a", labelsize=7)
 
-    # ── Right: Radial wavefunction + probability distribution ────────────────
     ax_r = fig.add_subplot(gs[2])
     color_R  = "#6be4ff"
     color_Pr = "#ff6b6b"
@@ -209,7 +179,6 @@ def plot_orbital_detail(n, l, m, out_file=None):
     ax_r.set_xlim(left=0)
     ax_r.grid(True, alpha=0.15)
 
-    # Combined legend
     lines1, labs1 = ax_r.get_legend_handles_labels()
     lines2, labs2 = ax_r2.get_legend_handles_labels()
     ax_r.legend(lines1 + lines2, labs1 + labs2, fontsize=9,
@@ -220,8 +189,6 @@ def plot_orbital_detail(n, l, m, out_file=None):
                 facecolor=fig.get_facecolor())
     print(f"  ✓  Saved {out_file}")
     plt.close(fig)
-
-# ── Plot 3: Radial distribution multi-panel (all orbitals, grouped by n) ──────
 
 def plot_radial_overview(orbitals, out_file="radial_overview.png"):
     ns = sorted(set(n for n, l, m in orbitals))
@@ -264,13 +231,7 @@ def plot_radial_overview(orbitals, out_file="radial_overview.png"):
     print(f"  ✓  Saved {out_file}")
     plt.close(fig)
 
-# ── Plot 4: Quantum number comparison strips ───────────────────────────────────
-
 def plot_n_strips(orbitals, out_file="n_comparison_strips.png"):
-    """
-    Horizontal strip layout: one row per n, orbitals of that n as columns.
-    Shows how the wavefunction spreads as n increases.
-    """
     from collections import defaultdict
     by_n = defaultdict(list)
     for n, l, m in orbitals:
@@ -306,7 +267,6 @@ def plot_n_strips(orbitals, out_file="n_comparison_strips.png"):
             ax.set_xticks([]); ax.set_yticks([])
             for sp in ax.spines.values(): sp.set_edgecolor("#1a1a2a")
 
-            # Row label on first column
             if ci == 0:
                 ax.set_ylabel(f"$n={n_val}$", fontsize=10, color="#a0bbd0", labelpad=4)
 
@@ -314,8 +274,6 @@ def plot_n_strips(orbitals, out_file="n_comparison_strips.png"):
                 facecolor=fig.get_facecolor())
     print(f"  ✓  Saved {out_file}")
     plt.close(fig)
-
-# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
     orbitals = discover_orbitals()
