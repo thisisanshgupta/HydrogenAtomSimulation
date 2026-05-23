@@ -8,7 +8,6 @@ Follow these steps to compile the backend and generate the visualization.
 ### 1. Compute the Wavefunction
 ```bash
 g++ -O3 -std=c++17 -o hydrogen_wavefunction hydrogen_wavefunction.cpp -lm
-
 ./hydrogen_wavefunction
 
 ```
