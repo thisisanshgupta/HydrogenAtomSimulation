@@ -1,23 +1,3 @@
-/**
- * File: hydrogen_wavefunction.cpp
- * Description: Vectorized computational core for hydrogenic bound-state eigenfunctions.
- *
- * Model computations:
- *   - Normalized radial functions with stable log-gamma normalization.
- *   - Complex spherical harmonics Y_{l,m}(theta, phi).
- *   - Stationary-state wavefunction on an x–z plane grid (y=0).
- *   - Probability densities and radial probability distributions.
- *   - Reduced-mass Bohr radius and electron–nucleus reduced mass.
- *
- * Model assumptions:
- *   - Non-relativistic, point nucleus, Schrödinger hydrogenic Hamiltonian with Coulomb potential.
- *   - No spin/fine-structure, external fields, or finite-nuclear-size effects.
- *   - SI Units: wavefunctions in m^{-3/2}, coordinates in meters, masses in kg.
- *
- * Author: Rewritten in C++ from Python original by Sebastian Mag
- * Build:  g++ -O3 -std=c++17 -o hydrogen_wavefunction hydrogen_wavefunction.cpp -lm
- */
-
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -28,26 +8,19 @@
 #include <algorithm>
 #include <cassert>
 
-// ─── Physical constants (SI) ─────────────────────────────────────────────────
 namespace PhysConst {
-    constexpr double m_e   = 9.1093837015e-31;   // electron mass [kg]
-    constexpr double m_p   = 1.67262192369e-27;  // proton mass   [kg]
-    constexpr double a0    = 5.29177210903e-11;  // Bohr radius   [m]
+    constexpr double m_e   = 9.1093837015e-31;
+    constexpr double m_p   = 1.67262192369e-27;
+    constexpr double a0    = 5.29177210903e-11;
     constexpr double pi    = 3.14159265358979323846;
 }
 
-// ─── Math helpers ─────────────────────────────────────────────────────────────
-
-/** log Γ(x) via Lanczos approximation (x > 0). */
 static double lgamma_impl(double x) { return std::lgamma(x); }
 
-/** Associated Legendre polynomial P_l^m(x) via recurrence (|m| ≤ l). */
 static double assoc_legendre(int l, int m, double x) {
-    // Handle negative m via relation P_l^{-m} = (-1)^m (l-m)!/(l+m)! P_l^m
     bool neg_m = false;
     if (m < 0) { m = -m; neg_m = true; }
 
-    // Compute P_m^m first
     double pmm = 1.0;
     if (m > 0) {
         double fact = 1.0;
@@ -64,7 +37,6 @@ static double assoc_legendre(int l, int m, double x) {
         }
         return pmm;
     }
-    // Compute P_{m+1}^m
     double pmm1 = x * (2 * m + 1) * pmm;
     if (l == m + 1) {
         if (neg_m) {
@@ -74,7 +46,6 @@ static double assoc_legendre(int l, int m, double x) {
         }
         return pmm1;
     }
-    // Recurrence for l > m+1
     double pll = 0.0;
     for (int ll = m + 2; ll <= l; ++ll) {
         pll  = ((2 * ll - 1) * x * pmm1 - (ll + m - 1) * pmm) / (ll - m);
@@ -89,9 +60,7 @@ static double assoc_legendre(int l, int m, double x) {
     return pll;
 }
 
-/** Normalised complex spherical harmonic Y_{l,m}(theta, phi). */
 static std::complex<double> sph_harm(int l, int m, double theta, double phi) {
-    // Condon–Shortley convention, same as scipy.special.sph_harm_y
     int abs_m = std::abs(m);
     double log_norm = 0.5 * (std::log(2 * l + 1) - std::log(4 * PhysConst::pi)
                      + lgamma_impl(l - abs_m + 1) - lgamma_impl(l + abs_m + 1));
@@ -99,11 +68,10 @@ static std::complex<double> sph_harm(int l, int m, double theta, double phi) {
     double Plm  = assoc_legendre(l, abs_m, std::cos(theta));
     std::complex<double> phase = std::exp(std::complex<double>(0.0, m * phi));
     std::complex<double> Y = norm * Plm * phase;
-    if (m < 0) Y *= (((abs_m % 2) == 0) ? 1.0 : -1.0);  // Condon–Shortley phase
+    if (m < 0) Y *= (((abs_m % 2) == 0) ? 1.0 : -1.0);
     return Y;
 }
 
-/** Generalised Laguerre polynomial L_n^alpha(x) via three-term recurrence. */
 static double gen_laguerre(int n, double alpha, double x) {
     if (n == 0) return 1.0;
     double L0 = 1.0;
@@ -116,9 +84,6 @@ static double gen_laguerre(int n, double alpha, double x) {
     return (n == 1) ? L1 : L1;
 }
 
-// ─── Physics helpers ──────────────────────────────────────────────────────────
-
-/** Electron–nucleus reduced mass μ [kg]. */
 double reduced_electron_nucleus_mass(int Z, double M = -1.0) {
     if (M < 0.0) {
         if (Z == 1) M = PhysConst::m_p;
@@ -127,24 +92,10 @@ double reduced_electron_nucleus_mass(int Z, double M = -1.0) {
     return (PhysConst::m_e * M) / (PhysConst::m_e + M);
 }
 
-/** Reduced-mass Bohr radius a_μ [m]. */
 double reduced_bohr_radius(double mu) {
     return PhysConst::a0 * (PhysConst::m_e / mu);
 }
 
-// ─── Core wavefunction routines ───────────────────────────────────────────────
-
-/**
- * Normalized hydrogenic radial wavefunction R_{n,l}(r).
- *
- * @param n   Principal quantum number (n ≥ 1).
- * @param l   Angular momentum quantum number (0 ≤ l ≤ n-1).
- * @param r   Radial coordinates [m], length N.
- * @param Z   Nuclear charge.
- * @param use_reduced_mass  Apply reduced-mass correction.
- * @param M   Nuclear mass [kg]; -1 means use proton mass for Z=1.
- * @return    Real radial wavefunction samples, length N [m^{-3/2}].
- */
 std::vector<double> radial_wavefunction_Rnl(
         int n, int l,
         const std::vector<double>& r,
@@ -169,14 +120,6 @@ std::vector<double> radial_wavefunction_Rnl(
     return R;
 }
 
-/**
- * Complex spherical harmonic Y_{l,m}(theta, phi).
- *
- * @param l, m  Quantum numbers.
- * @param theta Polar angles [rad], length N.
- * @param phi   Azimuthal angles [rad], length N.
- * @return      Complex Y_{l,m} samples, length N.
- */
 std::vector<std::complex<double>> spherical_harmonic_Ylm(
         int l, int m,
         const std::vector<double>& theta,
@@ -192,28 +135,14 @@ std::vector<std::complex<double>> spherical_harmonic_Ylm(
     return Y;
 }
 
-// ─── Full x-z slice computation ───────────────────────────────────────────────
-
 struct PsiSliceResult {
-    std::vector<double>               Xg;       // x-coordinates, row-major (grid_pts×grid_pts) [m]
-    std::vector<double>               Zg;       // z-coordinates, row-major [m]
-    std::vector<std::complex<double>> psi;      // wavefunction, row-major [m^{-3/2}]
-    double                            a_mu;     // reduced-mass Bohr radius [m]
-    int                               grid_pts; // number of points per axis
+    std::vector<double>               Xg;
+    std::vector<double>               Zg;
+    std::vector<std::complex<double>> psi;
+    double                            a_mu;
+    int                               grid_pts;
 };
 
-/**
- * Evaluate psi_{n,l,m}(x,0,z) on a square x–z grid.
- *
- * @param n, l, m    Quantum numbers.
- * @param Z          Nuclear charge.
- * @param use_rm     Use reduced mass.
- * @param M          Nuclear mass [kg]; -1 → proton for Z=1.
- * @param extent     Half-width of grid in units of a_mu.
- * @param grid_pts   Points per Cartesian axis.
- * @param phi_mode   0 = "plane" (phi=0 for x>=0, pi for x<0), 1 = constant phi_val.
- * @param phi_val    Constant phi value [rad] (used when phi_mode==1).
- */
 PsiSliceResult compute_psi_xz_slice(
         int n, int l, int m,
         int Z = 1, bool use_rm = true, double M = -1.0,
@@ -227,7 +156,6 @@ PsiSliceResult compute_psi_xz_slice(
     double a_mu = reduced_bohr_radius(mu);
     double r_max = extent * a_mu;
 
-    // Build 1-D axis
     std::vector<double> axis(grid_pts);
     for (int i = 0; i < grid_pts; ++i)
         axis[i] = -r_max + 2.0 * r_max * i / (grid_pts - 1);
@@ -235,7 +163,6 @@ PsiSliceResult compute_psi_xz_slice(
     int N2 = grid_pts * grid_pts;
     std::vector<double> Xg(N2), Zg(N2), r_flat(N2), theta_flat(N2), phi_flat(N2);
 
-    // Build meshgrid (indexing="ij" → rows = z-axis, cols = x-axis, matching numpy)
     for (int iz = 0; iz < grid_pts; ++iz) {
         for (int ix = 0; ix < grid_pts; ++ix) {
             int idx     = iz * grid_pts + ix;
@@ -260,14 +187,12 @@ PsiSliceResult compute_psi_xz_slice(
     return {Xg, Zg, psi, a_mu, grid_pts};
 }
 
-/** |psi|^2 from complex wavefunction samples. */
 std::vector<double> compute_probability_density(const std::vector<std::complex<double>>& psi) {
     std::vector<double> P(psi.size());
     for (std::size_t i = 0; i < psi.size(); ++i) P[i] = std::norm(psi[i]);
     return P;
 }
 
-/** P_{n,l}(r) = r^2 |R_{n,l}(r)|^2 */
 std::vector<double> compute_radial_probability_distribution(
         const std::vector<double>& R, const std::vector<double>& r)
 {
@@ -277,8 +202,6 @@ std::vector<double> compute_radial_probability_distribution(
     return Pr;
 }
 
-// ─── I/O: write grid data to CSV for Python plotter ──────────────────────────
-
 void write_psi_slice_csv(const std::string& fname, const PsiSliceResult& res) {
     std::ofstream f(fname);
     if (!f) throw std::runtime_error("Cannot open " + fname);
@@ -286,7 +209,6 @@ void write_psi_slice_csv(const std::string& fname, const PsiSliceResult& res) {
     int gp  = res.grid_pts;
     auto P  = compute_probability_density(res.psi);
 
-    // Header
     f << "x,z,re_psi,im_psi,prob_density\n";
     f << std::scientific;
     f.precision(10);
@@ -313,26 +235,23 @@ void write_radial_csv(const std::string& fname,
         f << r[i] / a_mu << ',' << R[i] << ',' << Pr[i] << '\n';
 }
 
-// ─── Main: emit data for a set of orbitals ────────────────────────────────────
-
 int main() {
-    // Orbitals to compute: {n, l, m}
     struct OrbitalSpec { int n, l, m; };
     std::vector<OrbitalSpec> orbitals = {
-        {1, 0,  0},   // 1s
-        {2, 0,  0},   // 2s
-        {2, 1,  0},   // 2p_z
-        {2, 1,  1},   // 2p
-        {3, 0,  0},   // 3s
-        {3, 1,  0},   // 3p_z
-        {3, 2,  0},   // 3d_z²
-        {3, 2,  1},   // 3d
-        {4, 0,  0},   // 4s
-        {4, 3,  0},   // 4f
+        {1, 0,  0},
+        {2, 0,  0},
+        {2, 1,  0},
+        {2, 1,  1},
+        {3, 0,  0},
+        {3, 1,  0},
+        {3, 2,  0},
+        {3, 2,  1},
+        {4, 0,  0},
+        {4, 3,  0},
     };
 
     const int Z        = 1;
-    const int grid_pts = 400;   // keep file sizes reasonable
+    const int grid_pts = 400;
 
     for (auto& orb : orbitals) {
         std::string tag = "n" + std::to_string(orb.n)
@@ -340,19 +259,17 @@ int main() {
                         + "m" + std::to_string(orb.m);
         std::cout << "Computing " << tag << " ..." << std::flush;
 
-        // --- x-z slice ---
-        double extent = 4.0 * (orb.n * orb.n) + 8.0;   // scale grid with n²
+        double extent = 4.0 * (orb.n * orb.n) + 8.0;
         auto res = compute_psi_xz_slice(orb.n, orb.l, orb.m,
                                         Z, true, -1.0,
                                         extent, grid_pts, 0);
         write_psi_slice_csv("psi_" + tag + ".csv", res);
 
-        // --- radial distribution ---
         int Nr    = 2000;
         double r_max = extent * res.a_mu;
         std::vector<double> r_arr(Nr), R_arr, Pr_arr;
         for (int i = 0; i < Nr; ++i)
-            r_arr[i] = r_max * (i + 1) / Nr;   // avoid r=0
+            r_arr[i] = r_max * (i + 1) / Nr;
         R_arr  = radial_wavefunction_Rnl(orb.n, orb.l, r_arr, Z, true);
         Pr_arr = compute_radial_probability_distribution(R_arr, r_arr);
         write_radial_csv("radial_" + tag + ".csv", r_arr, R_arr, Pr_arr, res.a_mu);
